@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 BANK = os.path.join(ROOT, "longform_topics.json")
 STATE = os.path.join(ROOT, "longform_used.json")
 
-MODEL = os.environ.get("MODELS_MODEL", "openai/gpt-4o-mini")
+MODEL = os.environ.get("MODELS_MODEL", "openai/gpt-4o")
 BASE = os.environ.get("MODELS_BASE_URL", "https://models.github.ai/inference")
 TOKEN = os.environ.get("MODELS_TOKEN") or os.environ.get("GITHUB_TOKEN")
 
@@ -57,6 +57,21 @@ def build_prompt(case):
         "- 'description': one sentence ending with 'Follow for more cold cases.'\n"
         "- 'hashtags': 6-8 tags including #truecrime #coldcase #documentary.\n"
         "Return ONLY the JSON object, no markdown."
+    )
+
+
+def continue_prompt(title, segs, n):
+    recent = " | ".join(s["text"] for s in segs[-6:])
+    return (
+        f"Continue this true-crime documentary titled \"{title}\".\n"
+        f"Recent lines so far: {recent}\n"
+        f"Add EXACTLY {n} MORE segments that move the story FORWARD (deeper into the investigation, "
+        "evidence, suspects and theories presented clearly AS theories, public reaction, and legacy). "
+        "Do NOT repeat anything already said. Do NOT include any closing or subscribe line.\n"
+        "Same rules: each segment = one or two short documentary sentences; 'keywords' = 1-3 ENGLISH words "
+        "for concrete cinematic stock footage; optional 'image' = a precise Wikimedia Commons search term "
+        "ONLY if a real archival photo almost certainly exists. ACCURACY IS SACRED, only real facts.\n"
+        "Return ONLY a JSON object: {\"segments\": [ {\"text\": \"...\", \"keywords\": \"...\"} ] }."
     )
 
 
@@ -113,8 +128,31 @@ def main():
             if s.get("image"):
                 seg["image"] = str(s["image"]).strip()
             clean.append(seg)
-    if len(clean) < 40:
-        print(f"CHYBA: model vratil len {len(clean)} segmentov (cakal som 75-95)."); sys.exit(1)
+    # poistka na dlzku: ak model dal malo, doziadaj este (continuation), aby video malo 8-10 min
+    tries = 0
+    while len(clean) < 95 and tries < 4:
+        tries += 1
+        need = min(40, 110 - len(clean))
+        try:
+            more = extract_json(call_model(continue_prompt(spec.get("title", case), clean, need)))
+        except Exception as e:
+            print(f"[continuation {tries}] {e}"); break
+        added = 0
+        have = {s["text"] for s in clean}
+        new = []
+        for s in more.get("segments", []):
+            if isinstance(s, dict) and s.get("text") and s.get("keywords") and s["text"].strip() not in have:
+                seg = {"text": str(s["text"]).strip(), "keywords": str(s["keywords"]).strip()}
+                if s.get("image"):
+                    seg["image"] = str(s["image"]).strip()
+                new.append(seg); have.add(seg["text"]); added += 1
+        # vloz NOVE segmenty pred poslednu (subscribe) vetu
+        clean = clean[:-1] + new + clean[-1:] if clean else new
+        print(f"[continuation {tries}] pridanych {added}, spolu {len(clean)}")
+        if added == 0:
+            break
+    if len(clean) < 30:
+        print(f"CHYBA: model vratil len {len(clean)} segmentov."); sys.exit(1)
     spec["segments"] = clean
     spec.setdefault("title", case)
     spec.setdefault("hashtags", ["#truecrime", "#coldcase", "#documentary", "#shorts", "#fyp"])
