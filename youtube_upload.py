@@ -78,7 +78,8 @@ def main():
         import appconfig, thumbnail
         cfg = appconfig.load()
         jpg = os.path.join(os.path.dirname(mp4), "_thumb.jpg")
-        thumbnail.make_thumbnail(mp4, title, cfg["ffmpeg"], cfg["ffprobe"], jpg)
+        imgs = os.path.join(ROOT, "assets", "images")
+        thumbnail.make_thumbnail(mp4, title, cfg["ffmpeg"], cfg["ffprobe"], jpg, images_dir=imgs)
         set_thumbnail(tok, vid, jpg)
         print("Thumbnail nastaveny.")
     except Exception as e:
