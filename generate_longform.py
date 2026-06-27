@@ -63,7 +63,8 @@ def build_prompt(case):
 def call_model(user_text):
     r = requests.post(BASE.rstrip("/") + "/chat/completions",
         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
-        json={"model": MODEL, "temperature": 0.8, "max_tokens": 8000,
+        json={"model": MODEL, "temperature": 0.8, "max_tokens": 12000,
+              "response_format": {"type": "json_object"},
               "messages": [{"role": "system", "content": SYSTEM},
                            {"role": "user", "content": user_text}]},
         timeout=300)
@@ -79,6 +80,7 @@ def extract_json(s):
     a, b = s.find("{"), s.rfind("}")
     if a != -1 and b != -1:
         s = s[a:b + 1]
+    s = re.sub(r",(\s*[}\]])", r"\1", s)   # odstran trailing commas (casta chyba modelu)
     return json.loads(s)
 
 

@@ -27,11 +27,16 @@ def access_token(cid, csec, rtok):
     return r.json()["access_token"]
 
 
-def upload(mp4, title, description, tags, category="27", privacy="public"):
-    cid, csec, rtok = _cfg("YOUTUBE_CLIENT_ID"), _cfg("YOUTUBE_CLIENT_SECRET"), _cfg("YOUTUBE_REFRESH_TOKEN")
-    if not (cid and csec and rtok):
-        raise RuntimeError("Chybaju YouTube OAuth udaje (CLIENT_ID/SECRET/REFRESH_TOKEN).")
-    tok = access_token(cid, csec, rtok)
+def set_thumbnail(tok, video_id, jpg):
+    with open(jpg, "rb") as f:
+        data = f.read()
+    r = requests.post(f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={video_id}",
+                      headers={"Authorization": f"Bearer {tok}", "Content-Type": "image/jpeg"},
+                      data=data, timeout=120)
+    r.raise_for_status()
+
+
+def upload(tok, mp4, title, description, tags, category="27", privacy="public"):
     meta = {"snippet": {"title": title[:100], "description": description[:4900],
                         "tags": tags[:15], "categoryId": category},
             "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
@@ -60,10 +65,24 @@ def main():
     hashline = " ".join(spec.get("hashtags", []))
     desc = (spec.get("description", "") + "\n\n" + hashline +
             "\n\nMusic: CO.AG Music - https://www.youtube.com/c/COAGmusic").strip()
+    cid, csec, rtok = _cfg("YOUTUBE_CLIENT_ID"), _cfg("YOUTUBE_CLIENT_SECRET"), _cfg("YOUTUBE_REFRESH_TOKEN")
+    if not (cid and csec and rtok):
+        raise RuntimeError("Chybaju YouTube OAuth udaje (CLIENT_ID/SECRET/REFRESH_TOKEN).")
+    tok = access_token(cid, csec, rtok)
     print(f"Nahravam na YouTube: {title}")
-    res = upload(mp4, title, desc, tags)
+    res = upload(tok, mp4, title, desc, tags)
     vid = res.get("id")
     print(f"OK: https://www.youtube.com/watch?v={vid}")
+    # auto-thumbnail (nech nezablokuje upload ak zlyha)
+    try:
+        import appconfig, thumbnail
+        cfg = appconfig.load()
+        jpg = os.path.join(os.path.dirname(mp4), "_thumb.jpg")
+        thumbnail.make_thumbnail(mp4, title, cfg["ffmpeg"], cfg["ffprobe"], jpg)
+        set_thumbnail(tok, vid, jpg)
+        print("Thumbnail nastaveny.")
+    except Exception as e:
+        print("Thumbnail preskoceny:", e)
 
 
 if __name__ == "__main__":
