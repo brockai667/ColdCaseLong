@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 BANK = os.path.join(ROOT, "longform_topics.json")
 STATE = os.path.join(ROOT, "longform_used.json")
 
-MODEL = os.environ.get("MODELS_MODEL", "openai/gpt-4o")
+MODEL = os.environ.get("MODELS_MODEL", "openai/gpt-4o-mini")
 BASE = os.environ.get("MODELS_BASE_URL", "https://models.github.ai/inference")
 TOKEN = os.environ.get("MODELS_TOKEN") or os.environ.get("GITHUB_TOKEN")
 
