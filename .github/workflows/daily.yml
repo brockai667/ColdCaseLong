@@ -1,0 +1,62 @@
+name: ColdCaseLong Documentary
+
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 07:00 UTC denne (zmen na napr. "0 7 */2 * *" pre kazdy 2. den)
+  workflow_dispatch: {}    # manualne spustenie z GitHub UI
+
+permissions:
+  contents: write          # commit stavu (longform_used.json, scripts/)
+  models: read             # GitHub Models (generovanie scenara zadarmo)
+
+concurrency:
+  group: coldcaselong
+  cancel-in-progress: false
+
+jobs:
+  make-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg + fonts
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+      - name: Install Python deps
+        run: pip install edge-tts requests
+
+      - name: Prepare config
+        run: cp config.example.json config.json
+
+      - name: Generate 8-10 min documentary script (GitHub Models, free)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python generate_longform.py
+
+      - name: Render video + upload to YouTube
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          SCRIPT=$(ls -t scripts/*.json | head -1)
+          echo "Scenar: $SCRIPT"
+          python make_video.py "$SCRIPT"
+          VIDEO=$(ls -t output/*.mp4 | head -1)
+          echo "Video: $VIDEO"
+          python youtube_upload.py "$VIDEO" "$SCRIPT"
+
+      - name: Persist state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          rm -f config.json
+          git add longform_used.json scripts/ 2>/dev/null || true
+          git commit -m "long-form run $(date -u +%F)" || echo "no changes"
+          git push || echo "nothing to push"
