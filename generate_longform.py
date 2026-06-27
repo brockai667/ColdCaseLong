@@ -60,6 +60,50 @@ def build_prompt(case):
     )
 
 
+DEFAULT_CHAPTERS = [
+    "Cold open: a gripping hook", "Who they were / the background",
+    "The day it happened", "The discovery", "The investigation begins",
+    "The key evidence", "The prime suspects", "The competing theories",
+    "What happened next", "Dead ends and new leads", "The legacy today",
+]
+
+
+def outline_prompt(case):
+    return (
+        f"Plan a 9 to 10 minute faceless true-crime DOCUMENTARY about this case: {case}.\n"
+        "Return ONLY JSON with this schema:\n"
+        '{\n  "title": "Punchy YouTube documentary title (max 70 chars)",\n'
+        '  "description": "One sentence ending with \'Follow for more cold cases.\'",\n'
+        '  "hashtags": ["#truecrime","#coldcase","#unsolved","#documentary","#mystery","#fyp"],\n'
+        '  "chapters": ["Cold open hook","Background","The event","..."]\n}\n'
+        "Give 10 to 12 chapter titles that, in order, tell the WHOLE story: a gripping cold-open hook, "
+        "the background, the event in detail, the aftermath, the investigation, the key evidence, the "
+        "suspects, the theories (clearly AS theories), later developments, and the legacy. "
+        "Real, widely-documented facts only. Return ONLY the JSON, no markdown."
+    )
+
+
+def chapter_prompt(case, title, chapter, idx, total, prev_tail):
+    return (
+        f"Faceless true-crime documentary titled \"{title}\" about: {case}.\n"
+        f"Write ONLY chapter {idx} of {total}: \"{chapter}\".\n"
+        + (f"The previous chapter ended with: {prev_tail}\n" if prev_tail else "")
+        + "Write 11 to 14 segments for THIS chapter only. Each segment = ONE or TWO short spoken "
+        "documentary sentences for a deep voiceover. Move the story FORWARD; do NOT repeat earlier lines; "
+        "do NOT write any closing or 'subscribe' line.\n"
+        + ("Chapter 1 first segment is the HOOK: under 14 words, gripping, NEVER start with 'Did you know'.\n"
+           if idx == 1 else "")
+        + "SAFETY: only real documented facts; never invent names/dates; theories AS theories; "
+        "respectful, no graphic detail.\n"
+        "'keywords' = 1-3 ENGLISH words for concrete cinematic STOCK footage matching the line "
+        "(e.g. 'foggy city night','old case files','vintage police car','dark forest','rain window night'). "
+        "Add 'image' to ONLY 1-2 segments here, and ONLY if a REAL archival photo almost certainly exists on "
+        "Wikimedia Commons (a famous suspect sketch/poster, a famous building/landmark, a well-known historical "
+        "photo, the specific aircraft/car/ship type) - use a precise Commons search term; otherwise omit 'image'.\n"
+        "Return ONLY JSON: {\"segments\": [ {\"text\": \"...\", \"keywords\": \"...\", \"image\": \"OPTIONAL\"} ] }."
+    )
+
+
 def continue_prompt(title, segs, n):
     recent = " | ".join(s["text"] for s in segs[-6:])
     return (
@@ -117,42 +161,68 @@ def main():
     case = " ".join(sys.argv[1:]).strip() or pick_case()
     if not case:
         print("CHYBA: ziadny pripad (zadaj argument alebo napln longform_topics.json)"); sys.exit(1)
-    print(f"Generujem 8-10 min scenar pre: {case}  (model {MODEL})...")
-    spec = extract_json(call_model(build_prompt(case)))
-    segs = spec.get("segments", [])
-    # validacia + cistenie
-    clean = []
-    for s in segs:
-        if isinstance(s, dict) and s.get("text") and s.get("keywords"):
-            seg = {"text": str(s["text"]).strip(), "keywords": str(s["keywords"]).strip()}
+    print(f"Generujem 8-10 min scenar pre: {case}  (model {MODEL}, po kapitolach)...")
+
+    def add_segments(raw, clean, have):
+        added = 0
+        for s in raw:
+            if not (isinstance(s, dict) and s.get("text") and s.get("keywords")):
+                continue
+            txt = str(s["text"]).strip()
+            if not txt or txt.lower() in have:
+                continue
+            seg = {"text": txt, "keywords": str(s["keywords"]).strip()}
             if s.get("image"):
                 seg["image"] = str(s["image"]).strip()
-            clean.append(seg)
-    # poistka na dlzku: ak model dal malo, doziadaj este (continuation), aby video malo 8-10 min
-    tries = 0
-    while len(clean) < 95 and tries < 4:
-        tries += 1
-        need = min(40, 110 - len(clean))
+            clean.append(seg); have.add(txt.lower()); added += 1
+        return added
+
+    # 1) osnova (titulok, popis, hashtagy, kapitoly)
+    try:
+        plan = extract_json(call_model(outline_prompt(case)))
+    except Exception as e:
+        print(f"[osnova zlyhala: {e}] pouzivam default kapitoly")
+        plan = {}
+    spec = {
+        "title": (plan.get("title") or case).strip(),
+        "description": (plan.get("description") or f"The full story of {case}. Follow for more cold cases.").strip(),
+        "hashtags": plan.get("hashtags") or ["#truecrime", "#coldcase", "#unsolved", "#documentary", "#mystery", "#fyp"],
+    }
+    chapters = [c for c in (plan.get("chapters") or []) if isinstance(c, str) and c.strip()] or DEFAULT_CHAPTERS
+    chapters = chapters[:12]
+    print(f"Titulok: {spec['title']}  |  {len(chapters)} kapitol")
+
+    # 2) generuj kazdu kapitolu zvlast (spolahlivo nazbiera ~100-140 segmentov)
+    clean, have = [], set()
+    for i, ch in enumerate(chapters, 1):
+        tail = " ".join(s["text"] for s in clean[-3:])
         try:
-            more = extract_json(call_model(continue_prompt(spec.get("title", case), clean, need)))
+            part = extract_json(call_model(chapter_prompt(case, spec["title"], ch, i, len(chapters), tail)))
+        except Exception as e:
+            print(f"[kapitola {i} '{ch[:30]}' zlyhala: {e}]"); continue
+        a = add_segments(part.get("segments", []), clean, have)
+        print(f"[kapitola {i}/{len(chapters)}] +{a}  spolu {len(clean)}")
+
+    # 3) poistka na dlzku: ak je malo, doziadaj este (continuation)
+    tries = 0
+    while len(clean) < 90 and tries < 4:
+        tries += 1
+        try:
+            more = extract_json(call_model(continue_prompt(spec["title"], clean, min(40, 120 - len(clean)))))
         except Exception as e:
             print(f"[continuation {tries}] {e}"); break
-        added = 0
-        have = {s["text"] for s in clean}
-        new = []
-        for s in more.get("segments", []):
-            if isinstance(s, dict) and s.get("text") and s.get("keywords") and s["text"].strip() not in have:
-                seg = {"text": str(s["text"]).strip(), "keywords": str(s["keywords"]).strip()}
-                if s.get("image"):
-                    seg["image"] = str(s["image"]).strip()
-                new.append(seg); have.add(seg["text"]); added += 1
-        # vloz NOVE segmenty pred poslednu (subscribe) vetu
-        clean = clean[:-1] + new + clean[-1:] if clean else new
-        print(f"[continuation {tries}] pridanych {added}, spolu {len(clean)}")
-        if added == 0:
+        a = add_segments(more.get("segments", []), clean, have)
+        print(f"[continuation {tries}] +{a}  spolu {len(clean)}")
+        if a == 0:
             break
-    if len(clean) < 30:
-        print(f"CHYBA: model vratil len {len(clean)} segmentov."); sys.exit(1)
+
+    # 4) zaveracia (subscribe) veta
+    closing = "Subscribe for cases the world never forgot."
+    if not clean or clean[-1]["text"] != closing:
+        clean.append({"text": closing, "keywords": "dark cinematic city night"})
+
+    if len(clean) < 40:
+        print(f"CHYBA: po vsetkych pokusoch len {len(clean)} segmentov."); sys.exit(1)
     spec["segments"] = clean
     spec.setdefault("title", case)
     spec.setdefault("hashtags", ["#truecrime", "#coldcase", "#documentary", "#shorts", "#fyp"])
