@@ -147,10 +147,45 @@ def slug(t):
     return re.sub(r"[^a-z0-9]+", "_", t.lower()).strip("_")[:50] or "doc"
 
 
-def pick_case():
+def refill_bank(min_unused=4, target=8):
+    """Ak v banke ostava malo nepouzitych pripadov, AI dogeneruje dalsie REALNE slavne
+    cold-case / nevyriesene pripady (dedup). Vdaka tomu napady nikdy nedojdu."""
     bank = json.load(open(BANK, encoding="utf-8")) if os.path.exists(BANK) else []
     used = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else []
-    left = [c for c in bank if c not in used]
+    unused = [c for c in bank if c not in used]
+    if len(unused) >= min_unused or not TOKEN:
+        return bank
+    have_lc = {c.strip().lower() for c in bank}
+    avoid = "; ".join(bank[-25:])
+    prompt = (
+        f"List {target} FAMOUS, REAL, widely-documented true-crime cases suitable for a respectful "
+        "YouTube documentary: unsolved mysteries, cold cases, famous heists/robberies, notorious "
+        "disappearances or historical crimes. Each must be a REAL, well-reported case (no fiction, no "
+        "made-up names). Do NOT include any of these already-used ones: " + avoid + ".\n"
+        'Return ONLY JSON: {"cases": ["The Zodiac Killer case", "The disappearance of ...", "..."]}. '
+        "Use a clear, specific case name for each."
+    )
+    try:
+        data = extract_json(call_model(prompt))
+        new = data.get("cases", []) if isinstance(data, dict) else []
+    except Exception as e:
+        print(f"[refill zlyhal: {e}]"); return bank
+    added = 0
+    for c in new:
+        c = str(c).strip()
+        if 6 <= len(c) <= 90 and c.lower() not in have_lc:
+            bank.append(c); have_lc.add(c.lower()); added += 1
+    if added:
+        json.dump(bank, open(BANK, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        print(f"[refill] pridanych {added} novych pripadov do banky (spolu {len(bank)})")
+    return bank
+
+
+def pick_case():
+    bank = refill_bank()
+    used = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else []
+    used_lc = {u.strip().lower() for u in used}
+    left = [c for c in bank if c.strip().lower() not in used_lc]
     return left[0] if left else (bank[0] if bank else None)
 
 
