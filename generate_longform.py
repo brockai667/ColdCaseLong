@@ -62,21 +62,20 @@ def build_prompt(case):
 
 DEFAULT_CHAPTERS = [
     "Cold open: a gripping hook", "Who they were / the background",
-    "The day it happened", "The discovery", "The investigation begins",
-    "The key evidence", "The prime suspects", "The competing theories",
-    "What happened next", "Dead ends and new leads", "The legacy today",
+    "The day it happened", "The investigation", "The key evidence",
+    "The prime suspects and theories", "What happened next", "The legacy today",
 ]
 
 
 def outline_prompt(case):
     return (
-        f"Plan a 9 to 10 minute faceless true-crime DOCUMENTARY about this case: {case}.\n"
+        f"Plan a 13 to 15 minute faceless true-crime DOCUMENTARY about this case: {case}.\n"
         "Return ONLY JSON with this schema:\n"
         '{\n  "title": "Punchy YouTube documentary title (max 70 chars)",\n'
         '  "description": "One sentence ending with \'Follow for more cold cases.\'",\n'
         '  "hashtags": ["#truecrime","#coldcase","#unsolved","#documentary","#mystery","#fyp"],\n'
         '  "chapters": ["Cold open hook","Background","The event","..."]\n}\n'
-        "Give 10 to 12 chapter titles that, in order, tell the WHOLE story: a gripping cold-open hook, "
+        "Give 8 chapter titles that, in order, tell the WHOLE story: a gripping cold-open hook, "
         "the background, the event in detail, the aftermath, the investigation, the key evidence, the "
         "suspects, the theories (clearly AS theories), later developments, and the legacy. "
         "Real, widely-documented facts only. Return ONLY the JSON, no markdown."
@@ -88,7 +87,7 @@ def chapter_prompt(case, title, chapter, idx, total, prev_tail):
         f"Faceless true-crime documentary titled \"{title}\" about: {case}.\n"
         f"Write ONLY chapter {idx} of {total}: \"{chapter}\".\n"
         + (f"The previous chapter ended with: {prev_tail}\n" if prev_tail else "")
-        + "Write 11 to 14 segments for THIS chapter only. Each segment = ONE or TWO short spoken "
+        + "Write 9 to 11 segments for THIS chapter only. Each segment = ONE or TWO short spoken "
         "documentary sentences for a deep voiceover. Move the story FORWARD; do NOT repeat earlier lines; "
         "do NOT write any closing or 'subscribe' line.\n"
         + ("Chapter 1 first segment is the HOOK: under 14 words, gripping, NEVER start with 'Did you know'.\n"
@@ -240,10 +239,10 @@ def main():
 
     # 3) poistka na dlzku: ak je malo, doziadaj este (continuation)
     tries = 0
-    while len(clean) < 90 and tries < 4:
+    while len(clean) < 72 and tries < 3:
         tries += 1
         try:
-            more = extract_json(call_model(continue_prompt(spec["title"], clean, min(40, 120 - len(clean)))))
+            more = extract_json(call_model(continue_prompt(spec["title"], clean, min(30, 85 - len(clean)))))
         except Exception as e:
             print(f"[continuation {tries}] {e}"); break
         a = add_segments(more.get("segments", []), clean, have)
