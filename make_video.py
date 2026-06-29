@@ -345,6 +345,17 @@ def build_ass(all_words, cfg, path):
     per = max(1, cfg.get("caption_words_per_line", 3))
     mv = cfg.get("caption_margin_v", 880)
     mh = cfg.get("caption_margin_h", 150)
+    font = cfg.get("caption_font", "Arial")           # Style C: DM Serif Display
+    align = int(cfg.get("caption_alignment", 2))      # 5 = stred (jedno velke slovo)
+    case = cfg.get("caption_case", "upper")           # asis -> nechaj ako v scenari
+    fade_ms = int(cfg.get("caption_fade_ms", 0))
+    lead = float(cfg.get("caption_lead", 0.0))
+
+    def _case(s):
+        return s.upper() if case == "upper" else (s.lower() if case == "lower" else s)
+
+    if lead:
+        all_words = [(max(0.0, s - lead), d, t) for (s, d, t) in all_words]
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -353,13 +364,14 @@ def build_ass(all_words, cfg, path):
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,Arial,{fs},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
-        f"-1,0,0,0,100,100,0,0,1,7,3,2,{mh},{mh},{mv},1\n\n"
+        f"Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+        f"-1,0,0,0,100,100,0,0,1,4,2,{align},{mh},{mh},{mv},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
     hl = cfg.get("caption_highlight_hex", "00F2FF")   # ASS BGR (zlta)
     pop = cfg.get("caption_pop_scale", 116)
+    fadt = ("{\\fad(%d,%d)}" % (fade_ms, min(fade_ms, 100))) if fade_ms else ""
     # rozdel slova na frazy po `per`; v ramci frazy sa zvyrazni prave hovorene slovo
     chunks = [all_words[j:j + per] for j in range(0, len(all_words), per)]
     lines = []
@@ -372,14 +384,14 @@ def build_ass(all_words, cfg, path):
                 ev_end = ev_start + 0.15
             parts = []
             for k, w in enumerate(chunk):
-                word = w[2].upper().replace("\n", " ").replace("{", "(").replace("}", ")")
+                word = _case(w[2]).replace("\n", " ").replace("{", "(").replace("}", ")")
                 if k == wi:
                     parts.append(f"{{\\c&H{hl}&\\fscx{pop}\\fscy{pop}}}{word}{{\\r}}")
                 elif k < wi:
                     parts.append(word)                                # uz povedane -> viditelne
                 else:
                     parts.append(f"{{\\alpha&HFF&}}{word}{{\\r}}")     # buduce -> nevidiltelne (drzi sirku, neprezradi)
-            text = " ".join(parts)
+            text = fadt + " ".join(parts)
             lines.append(f"Dialogue: 0,{secs_to_ass(ev_start)},{secs_to_ass(ev_end)},Default,,0,0,0,,{text}")
     with open(path, "w", encoding="utf-8") as f:
         f.write(header + "\n".join(lines) + "\n")
@@ -457,12 +469,36 @@ def add_music(video, music, cfg, tmp):
         return out
 
 
+def _ensure_cinematic_music(music_dir, cfg):
+    """Stiahne par CINEMATIC/dramatickych trackov (Mixkit, volna licencia) ak chybaju. Chranene."""
+    try:
+        os.makedirs(music_dir, exist_ok=True)
+        if sum(1 for m in os.listdir(music_dir) if m.startswith("cine_")) >= 2:
+            return
+        import ssl as _ssl, urllib.request as _u
+        ctx = _ssl._create_unverified_context()
+        ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        for tid in cfg.get("cinematic_music_ids", [720, 892, 871, 616]):
+            p = os.path.join(music_dir, f"cine_{tid}.mp3")
+            if os.path.exists(p) and os.path.getsize(p) > 100000:
+                continue
+            try:
+                data = _u.urlopen(_u.Request(f"https://assets.mixkit.co/music/{tid}/{tid}.mp3", headers=ua),
+                                  context=ctx, timeout=120).read()
+                with open(p, "wb") as f:
+                    f.write(data)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def burn_captions(video, ass_path, out_path, cfg, tmp):
     ff = cfg["ffmpeg"]
     # subtitles filter ma problem s ':' vo Windows ceste -> spustime s cwd=tmp a relativnym menom
     ass_rel = os.path.basename(ass_path)
     vid_rel = os.path.relpath(video, tmp).replace(os.sep, "/")
-    run_in([ff, "-y", "-i", vid_rel, "-vf", f"subtitles={ass_rel}",
+    run_in([ff, "-y", "-i", vid_rel, "-vf", f"subtitles={ass_rel}:fontsdir=../assets/fonts",
             "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-maxrate", "8M", "-bufsize", "16M",
             "-pix_fmt", "yuv420p",
             "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
@@ -572,8 +608,12 @@ def main():
     music_dir = os.path.join(ROOT, "assets", "music")
     musics = [os.path.join(music_dir, m) for m in os.listdir(music_dir)
               if m.lower().endswith((".mp3", ".m4a", ".wav"))] if os.path.isdir(music_dir) else []
+    _ensure_cinematic_music(music_dir, cfg)          # cinematic/dramaticke tracky ak chybaju
+    musics = [os.path.join(music_dir, m) for m in os.listdir(music_dir)
+              if m.lower().endswith((".mp3", ".m4a", ".wav"))] if os.path.isdir(music_dir) else []
     if musics:
-        track = random.choice(musics)               # nahodny track -> kazde video ina hudba
+        cine = [m for m in musics if os.path.basename(m).startswith("cine_")]
+        track = random.choice(cine if cine else musics)   # preferuj cinematic; kazde video ine
         print(f"  Pridavam hudbu: {os.path.basename(track)}")
         video = add_music(video, track, cfg, tmp)
 
