@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -409,14 +410,31 @@ def add_sfx(ff, video, cut_times, tmp):
 
 
 def add_music(video, music, cfg, tmp):
+    """Podloz hudbu pod hlas: hudba sa UHYBA pod hlasom (sidechain duck) + fade in/out.
+    Plne chranene -> pri chybe spadne na jednoduchy mix (povodne spravanie)."""
     ff = cfg["ffmpeg"]
     vol = cfg.get("music_volume", 0.12)
     out = os.path.join(tmp, "with_music.mp4")
-    run([ff, "-y", "-i", video, "-stream_loop", "-1", "-i", music,
-         "-filter_complex",
-         f"[1:a]volume={vol}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
-         "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", out])
-    return out
+    try:
+        dur = probe_duration(cfg["ffprobe"], video)
+        fade = float(cfg.get("music_fade", 2.0))
+        fin = min(fade, 1.2)
+        fout = max(0.1, dur - fade)
+        fc = (f"[1:a]volume={vol},afade=t=in:st=0:d={fin:.2f},"
+              f"afade=t=out:st={fout:.2f}:d={fade:.2f}[m];"
+              f"[m][0:a]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=260[mduck];"
+              f"[0:a][mduck]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]")
+        run([ff, "-y", "-i", video, "-stream_loop", "-1", "-i", music,
+             "-filter_complex", fc,
+             "-map", "0:v", "-map", "[a]", "-c:v", "copy",
+             "-c:a", "aac", "-ar", "44100", "-b:a", "160k", "-shortest", out])
+        return out
+    except Exception:
+        run([ff, "-y", "-i", video, "-stream_loop", "-1", "-i", music,
+             "-filter_complex",
+             f"[1:a]volume={vol}[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+             "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest", out])
+        return out
 
 
 def burn_captions(video, ass_path, out_path, cfg, tmp):
@@ -535,8 +553,9 @@ def main():
     musics = [os.path.join(music_dir, m) for m in os.listdir(music_dir)
               if m.lower().endswith((".mp3", ".m4a", ".wav"))] if os.path.isdir(music_dir) else []
     if musics:
-        print(f"  Pridavam hudbu: {os.path.basename(musics[0])}")
-        video = add_music(video, musics[0], cfg, tmp)
+        track = random.choice(musics)               # nahodny track -> kazde video ina hudba
+        print(f"  Pridavam hudbu: {os.path.basename(track)}")
+        video = add_music(video, track, cfg, tmp)
 
     if cfg.get("sfx", True):
         print("  Pridavam jemne zvukove efekty na strihy...")
