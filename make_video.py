@@ -75,6 +75,61 @@ def tts(text, voice, out_mp3, rate="+0%", pitch="+0Hz"):
     return asyncio.run(_tts(text, voice, out_mp3, rate, pitch))
 
 
+_KOKORO = None
+
+
+def _kokoro_model_dir(cfg):
+    cands = [cfg.get("kokoro_model_dir"), os.path.join(ROOT, "kokoro"), r"C:\Users\damia\kokoro"]
+    for c in cands:
+        if c and os.path.exists(os.path.join(c, "kokoro-v1.0.onnx")):
+            return c
+    return os.path.join(ROOT, "kokoro")
+
+
+def _ensure_kokoro_model(md):
+    import ssl as _ssl
+    import urllib.request as _u
+    os.makedirs(md, exist_ok=True)
+    base = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+    ctx = _ssl._create_unverified_context()
+    for fn in ("kokoro-v1.0.onnx", "voices-v1.0.bin"):
+        p = os.path.join(md, fn)
+        if not os.path.exists(p) or os.path.getsize(p) < 1000000:
+            sys.stderr.write(f"[kokoro] stahujem {fn}...\n")
+            with _u.urlopen(base + "/" + fn, context=ctx, timeout=600) as r, open(p, "wb") as f:
+                f.write(r.read())
+
+
+def kokoro_tts(text, out_mp3, cfg):
+    """Ludsky hlas cez Kokoro (kokoro-onnx). Casovanie slov odhadom (proporcne dlzkou slov)."""
+    global _KOKORO
+    import soundfile as sf
+    if _KOKORO is None:
+        from kokoro_onnx import Kokoro
+        md = _kokoro_model_dir(cfg)
+        _ensure_kokoro_model(md)
+        _KOKORO = Kokoro(os.path.join(md, "kokoro-v1.0.onnx"), os.path.join(md, "voices-v1.0.bin"))
+    voice = cfg.get("kokoro_voice", "am_puck")
+    samples, sr = _KOKORO.create(text, voice=voice, speed=float(cfg.get("kokoro_speed", 1.0)), lang="en-us")
+    wav = out_mp3 + ".tmp.wav"
+    sf.write(wav, samples, sr)
+    run([cfg["ffmpeg"], "-y", "-i", wav, "-b:a", "160k", out_mp3])
+    try:
+        os.remove(wav)
+    except OSError:
+        pass
+    dur = len(samples) / sr
+    toks = text.split() or [text]
+    wts = [len(w) + 1 for w in toks]
+    tot = sum(wts) or 1
+    out, t = [], 0.0
+    for w, wt in zip(toks, wts):
+        d = dur * wt / tot
+        out.append((t, d, w))
+        t += d
+    return out
+
+
 def openai_tts(text, key, voice, model, instructions, out_mp3, ffprobe):
     """Prirodzeny hlas cez OpenAI TTS. Vrati ODHAD casovania slov (OpenAI ho nedava)."""
     import requests
@@ -430,7 +485,9 @@ def main():
         print(f"  [{i+1}/{len(segments)}] TTS: {text[:55]}...")
         raw_audio = os.path.join(tmp, f"seg_{i:03d}_raw.mp3")
         audio = os.path.join(tmp, f"seg_{i:03d}.mp3")
-        if cfg.get("openai_api_key"):
+        if cfg.get("tts_engine") == "kokoro":
+            words = kokoro_tts(text, raw_audio, cfg)
+        elif cfg.get("openai_api_key"):
             words = openai_tts(text, cfg["openai_api_key"],
                                cfg.get("openai_voice", "onyx"),
                                cfg.get("openai_tts_model", "gpt-4o-mini-tts"),
