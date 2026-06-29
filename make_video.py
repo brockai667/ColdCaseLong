@@ -179,21 +179,32 @@ def get_broll(keywords, cfg, broll_dir, used_ids):
         return None, None
     try:
         import requests
-        r = requests.get(
-            "https://api.pexels.com/videos/search",
-            params={"query": keywords, "per_page": 25, "size": "medium", "orientation": "landscape"},
-            headers={"Authorization": key}, timeout=30,
-        )
-        r.raise_for_status()
-        # prejdi vysledky v poradi relevancie, vyber prvy NEPOUZITY klip
-        for v in r.json().get("videos", []):
+
+        def search(params):
+            r = requests.get("https://api.pexels.com/videos/search", params=params,
+                             headers={"Authorization": key}, timeout=30)
+            r.raise_for_status()
+            return r.json().get("videos", [])
+
+        # klipy v SPRAVNEJ orientacii (docs=landscape 16:9, shorts=portrait) -> minimalny orez, ostre.
+        orient = "portrait" if int(cfg.get("height", 1080)) >= int(cfg.get("width", 1920)) else "landscape"
+        vids = search({"query": keywords, "per_page": 40, "orientation": orient})
+        if not vids:
+            vids = search({"query": keywords, "per_page": 40})
+
+        def rank(f):
+            h = f.get("height") or 0
+            # preferuj co NAJVYSSIE rozlisenie do 2160 (ostry obraz po Ken Burns), potom co najmensie nad 2160
+            return (0, -h) if h <= 2160 else (1, h)
+
+        for v in vids:
             vid = v.get("id")
             if vid in used_ids:
                 continue
-            files = [f for f in v.get("video_files", []) if (f.get("height") or 0) >= 600]
+            files = [f for f in v.get("video_files", []) if (f.get("height") or 0) >= 720]
             if not files:
                 continue
-            files.sort(key=lambda f: abs((f.get("height") or 0) - 1080))
+            files.sort(key=rank)
             cache = os.path.join(broll_dir, f"{vid}.mp4")
             if not os.path.exists(cache):
                 data = requests.get(files[0]["link"], timeout=120).content
@@ -255,14 +266,16 @@ def render_segment(i, audio_path, duration, broll_path, cfg, tmp, is_image=False
     W, H, FPS = cfg["width"], cfg["height"], cfg["fps"]
     grade = cfg.get("color_grade", "").strip()   # jednotny vzhlad pre vsetky klipy
     out = os.path.join(tmp, f"seg_{i:03d}.mp4")
-    common_out = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+    common_out = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                   "-pix_fmt", "yuv420p", "-r", str(FPS),
                   "-c:a", "aac", "-ar", "44100", "-b:a", "160k", out]
     motion = cfg.get("motion", True)
+    nf = max(1, int(round(duration * FPS)))         # poc. framov -> plynuly pan cez cely zaber
 
     def broll_cmd(use_motion):
         if is_image:
             # FOTKA: cela viditelna na CIERNOM pozadi (fit, ziadne orezanie) + pomaly zoom
+            # (fotku NEpanujeme do strany -> odhalili by sa cierne okraje)
             base = (f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
                     f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1")
             if use_motion:
@@ -271,12 +284,19 @@ def render_segment(i, audio_path, duration, broll_path, cfg, tmp, is_image=False
             else:
                 vf = base + f",fps={FPS}"
         elif use_motion:
-            # Ken Burns na VIDEU: vyplnit + pomaly zoom (retencia)
+            # Ken Burns na VIDEU so STRIEDANIM pohybu -> kazdy zaber posobi inak (dynamickejsi strih)
             o_w, o_h = int(W * 1.5), int(H * 1.5)
+            xc, yc = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+            v = i % 3
+            if v == 0:
+                z, x, y = "min(zoom+0.0012,1.18)", xc, yc                     # zoom-in do stredu
+            elif v == 1:
+                z, x, y = "min(zoom+0.0010,1.15)", f"(iw-iw/zoom)*on/{nf}", yc   # pan zlava->prava
+            else:
+                z, x, y = "min(zoom+0.0010,1.15)", xc, f"(ih-ih/zoom)*on/{nf}"   # pan hore->dole
             vf = (f"scale={o_w}:{o_h}:force_original_aspect_ratio=increase,"
                   f"crop={o_w}:{o_h},setsar=1,"
-                  f"zoompan=z='min(zoom+0.0012,1.18)':d=1:"
-                  f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS}")
+                  f"zoompan=z='{z}':d=1:x='{x}':y='{y}':s={W}x{H}:fps={FPS}")
         else:
             vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
                   f"crop={W}:{H},setsar=1,fps={FPS}")
@@ -443,10 +463,10 @@ def burn_captions(video, ass_path, out_path, cfg, tmp):
     ass_rel = os.path.basename(ass_path)
     vid_rel = os.path.relpath(video, tmp).replace(os.sep, "/")
     run_in([ff, "-y", "-i", vid_rel, "-vf", f"subtitles={ass_rel}",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-maxrate", "8M", "-bufsize", "16M",
             "-pix_fmt", "yuv420p",
             "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-            "-c:a", "aac", "-b:a", "192k", out_path], cwd=tmp)
+            "-c:a", "aac", "-ar", "44100", "-b:a", "192k", "-movflags", "+faststart", out_path], cwd=tmp)
 
 
 def run_in(cmd, cwd):
