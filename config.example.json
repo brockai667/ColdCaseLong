@@ -26,22 +26,23 @@
     "#documentary"
   ],
   "color_grade": "eq=contrast=1.18:brightness=-0.06:saturation=0.62:gamma=0.92,vignette=angle=PI/3.6,noise=alls=7:allf=t",
-  "caption_words_per_line": 1,
-  "caption_fontsize": 132,
-  "caption_margin_v": 0,
-  "caption_margin_h": 80,
+  "caption_words_per_line": 4,
+  "caption_fontsize": 80,
+  "caption_margin_v": 880,
+  "caption_margin_h": 120,
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe",
-  "caption_font": "DM Serif Display",
-  "caption_alignment": 5,
-  "caption_case": "asis",
-  "caption_fade_ms": 150,
-  "caption_lead": 0.12,
-  "caption_highlight_hex": "FFFFFF",
-  "caption_pop_scale": 106,
+  "caption_font": "Arial",
+  "caption_alignment": 2,
+  "caption_case": "upper",
+  "caption_fade_ms": 0,
+  "caption_lead": 0.0,
+  "caption_highlight_hex": "00F2FF",
+  "caption_pop_scale": 116,
   "cinematic_music_ids": [
     720,
     892,
     871
-  ]
+  ],
+  "caption_words_per_row": 0
 }
