@@ -131,6 +131,30 @@ def kokoro_tts(text, out_mp3, cfg):
     return out
 
 
+_WM = None
+
+
+def align(audio, fallback):
+    """Forced alignment cez faster-whisper -> PRESNE casovanie slov (titulky sediace s AI hlasom).
+    Kriticke pri dlhych dokumentoch (proporcny odhad inak ujde). Pri chybe vrati fallback."""
+    global _WM
+    try:
+        if _WM is None:
+            from faster_whisper import WhisperModel
+            _WM = WhisperModel("base.en", device="cpu", compute_type="int8")
+        segs, _ = _WM.transcribe(audio, word_timestamps=True, language="en")
+        out = []
+        for s in segs:
+            for w in (s.words or []):
+                wt = w.word.strip()
+                if wt:
+                    out.append((float(w.start), max(0.05, float(w.end) - float(w.start)), wt))
+        return out if len(out) >= max(1, len(fallback) // 2) else fallback
+    except Exception as e:
+        sys.stderr.write("align zlyhal: %s\n" % str(e)[:120])
+        return fallback
+
+
 def openai_tts(text, key, voice, model, instructions, out_mp3, ffprobe):
     """Prirodzeny hlas cez OpenAI TTS. Vrati ODHAD casovania slov (OpenAI ho nedava)."""
     import requests
@@ -365,7 +389,7 @@ def build_ass(all_words, cfg, path):
         "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
         "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{font},{fs},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
-        f"-1,0,0,0,100,100,0,0,1,4,2,{align},{mh},{mh},{mv},1\n\n"
+        f"-1,0,0,0,100,100,0,0,1,6,2,{align},{mh},{mh},{mv},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -572,6 +596,7 @@ def main():
             words = tts(text, voice, raw_audio,
                         cfg.get("tts_rate", "+0%"), cfg.get("tts_pitch", "+0Hz"))
         trim_trailing_silence(cfg["ffmpeg"], raw_audio, audio, cfg.get("segment_gap", 0.12))
+        words = align(audio, words)                      # presne casovanie titulkov (sync s hlasom)
         dur = probe_duration(cfg["ffprobe"], audio)
         vid = None
         is_image = False
