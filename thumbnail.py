@@ -122,11 +122,22 @@ def make_thumbnail(video, title, ffmpeg, ffprobe, out_jpg, hook=None, images_dir
     W, H = 1280, 720
     face = _pick_face(images_dir, H)
 
-    # pozadie: dramaticky frame z videa (full-res, ostry), stmavene aby text+tvar vyskocili
-    bg = _pick_frame(video, ffmpeg, ffprobe, out_jpg)
+    # pozadie: PREFERUJ cisty frame z raw b-rollu (_thumbsrc.jpg, BEZ napalenych titulkov);
+    # fallback = dramaticky frame z videa (ten moze obsahovat caption -> kolizia textov)
+    bg = None
+    _src = os.path.join(os.path.dirname(os.path.abspath(video)), "_thumbsrc.jpg")
+    if os.path.exists(_src):
+        try:
+            from PIL import Image as _I
+            bg = _I.open(_src).convert("RGB")
+        except Exception:
+            bg = None
+    if bg is None:
+        bg = _pick_frame(video, ffmpeg, ffprobe, out_jpg)
+        if bg is not None:
+            w0, h0 = bg.size
+            bg = bg.crop((0, 0, w0, int(h0 * 0.86)))
     if bg is not None:
-        w0, h0 = bg.size
-        bg = bg.crop((0, 0, w0, int(h0 * 0.86)))
         img = ImageOps.fit(bg, (W, H), method=Image.LANCZOS)
     else:
         img = Image.new("RGB", (W, H), (16, 16, 22))
