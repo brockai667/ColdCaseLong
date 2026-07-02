@@ -118,17 +118,48 @@ def continue_prompt(title, segs, n):
     )
 
 
+import time as _time
+
+# hlavny model + zalozne (ak hlavny je pod limitom / padne, skusi sa dalsi zadarmo)
+_MODELS = [MODEL] + [m.strip() for m in os.environ.get(
+    "MODELS_FALLBACK", "openai/gpt-4.1-mini,openai/gpt-4o").split(",")
+    if m.strip() and m.strip() != MODEL]
+_MIN_GAP = float(os.environ.get("MODELS_MIN_GAP", "4"))   # rozostup (s) medzi volaniami -> limit za minutu
+_last = [0.0]
+
+
 def call_model(user_text):
-    r = requests.post(BASE.rstrip("/") + "/chat/completions",
-        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
-        json={"model": MODEL, "temperature": 0.8, "max_tokens": 12000,
-              "response_format": {"type": "json_object"},
-              "messages": [{"role": "system", "content": SYSTEM},
-                           {"role": "user", "content": user_text}]},
-        timeout=300)
-    if r.status_code >= 400:
-        raise RuntimeError(f"Models API {r.status_code}: {r.text[:500]}")
-    return r.json()["choices"][0]["message"]["content"]
+    gap = _MIN_GAP - (_time.time() - _last[0])            # nenaraz na limit poctu volani za minutu
+    if gap > 0:
+        _time.sleep(gap)
+    last = "?"
+    for model in _MODELS:                                 # hlavny model, potom zalozne
+        for attempt in range(4):                          # opakuj pri 429 / 5xx (rate limit / pretazenie)
+            try:
+                r = requests.post(BASE.rstrip("/") + "/chat/completions",
+                    headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+                    json={"model": model, "temperature": 0.8, "max_tokens": 12000,
+                          "response_format": {"type": "json_object"},
+                          "messages": [{"role": "system", "content": SYSTEM},
+                                       {"role": "user", "content": user_text}]},
+                    timeout=300)
+            except Exception as e:
+                last = "exc %s" % str(e)[:120]; _time.sleep(6); continue
+            if r.status_code == 429 or r.status_code >= 500:      # limit / pretazenie -> pockaj a skus znova
+                last = "%s %s" % (r.status_code, r.text[:150])
+                wait = 8 * (attempt + 1)
+                ra = r.headers.get("Retry-After")                # respektuj Retry-After ak ho server posle
+                if ra:
+                    try: wait = max(wait, min(90, int(float(ra))))
+                    except Exception: pass
+                print("[%s pokus %d/4] %s -> cakam %ds" % (model, attempt + 1, r.status_code, wait))
+                _time.sleep(wait); continue
+            if r.status_code >= 400:                              # ina chyba -> skus dalsi model
+                last = "%s %s" % (r.status_code, r.text[:200]); break
+            _last[0] = _time.time()
+            return r.json()["choices"][0]["message"]["content"]
+    _last[0] = _time.time()
+    raise RuntimeError("Models API zlyhalo (vsetky modely): %s" % last)
 
 
 def extract_json(s):
