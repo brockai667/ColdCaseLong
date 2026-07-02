@@ -28,7 +28,7 @@
   "color_grade": "eq=contrast=1.18:brightness=-0.06:saturation=0.62:gamma=0.92,vignette=angle=PI/3.6,noise=alls=7:allf=t",
   "caption_words_per_line": 4,
   "caption_fontsize": 80,
-  "caption_margin_v": 880,
+  "caption_margin_v": 120,
   "caption_margin_h": 120,
   "ffmpeg": "ffmpeg",
   "ffprobe": "ffprobe",
