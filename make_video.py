@@ -613,18 +613,29 @@ def main():
         print(f"  [{i+1}/{len(segments)}] TTS: {text[:55]}...")
         raw_audio = os.path.join(tmp, f"seg_{i:03d}_raw.mp3")
         audio = os.path.join(tmp, f"seg_{i:03d}.mp3")
-        if cfg.get("tts_engine") == "kokoro":
-            words = kokoro_tts(text, raw_audio, cfg)
-        elif cfg.get("openai_api_key"):
-            words = openai_tts(text, cfg["openai_api_key"],
-                               cfg.get("openai_voice", "onyx"),
-                               cfg.get("openai_tts_model", "gpt-4o-mini-tts"),
-                               cfg.get("openai_instructions",
-                                       "Speak in a deep, serious, suspenseful documentary narration style, measured and ominous."),
-                               raw_audio, cfg["ffprobe"])
-        else:
-            words = tts(text, voice, raw_audio,
-                        cfg.get("tts_rate", "+0%"), cfg.get("tts_pitch", "+0Hz"))
+        def _tts_one(t):
+            if cfg.get("tts_engine") == "kokoro":
+                return kokoro_tts(t, raw_audio, cfg)
+            elif cfg.get("openai_api_key"):
+                return openai_tts(t, cfg["openai_api_key"],
+                                  cfg.get("openai_voice", "onyx"),
+                                  cfg.get("openai_tts_model", "gpt-4o-mini-tts"),
+                                  cfg.get("openai_instructions",
+                                          "Speak in a deep, serious, suspenseful documentary narration style, measured and ominous."),
+                                  raw_audio, cfg["ffprobe"])
+            else:
+                return tts(t, voice, raw_audio,
+                           cfg.get("tts_rate", "+0%"), cfg.get("tts_pitch", "+0Hz"))
+        try:
+            words = _tts_one(text)
+        except Exception as e:              # jeden zly segment nesmie zabit cely render
+            print(f"       [TTS zlyhalo: {str(e)[:80]}] retry so zbalenym/skratenym textom")
+            text = re.sub(r"(\w+)(\s+)+", r"", text, flags=re.IGNORECASE)[:280].strip() or "..."
+            try:
+                words = _tts_one(text)
+            except Exception as e2:
+                print(f"       [segment {i+1} preskoceny: {str(e2)[:80]}]")
+                continue
         trim_trailing_silence(cfg["ffmpeg"], raw_audio, audio, cfg.get("segment_gap", 0.12))
         words = align(audio, words)                      # presne casovanie titulkov (sync s hlasom)
         dur = probe_duration(cfg["ffprobe"], audio)
