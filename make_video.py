@@ -630,7 +630,7 @@ def main():
             words = _tts_one(text)
         except Exception as e:              # jeden zly segment nesmie zabit cely render
             print(f"       [TTS zlyhalo: {str(e)[:80]}] retry so zbalenym/skratenym textom")
-            text = re.sub(r"(\w+)(\s+)+", r"", text, flags=re.IGNORECASE)[:280].strip() or "..."
+            text = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)[:280].strip() or "..."
             try:
                 words = _tts_one(text)
             except Exception as e2:
