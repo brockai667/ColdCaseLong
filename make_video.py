@@ -653,6 +653,15 @@ def main():
                 broll, vid = get_broll(seg.get("keywords", ""), cfg, broll_dir, used_ids)
         else:
             broll, vid = get_broll(seg.get("keywords", ""), cfg, broll_dir, used_ids)
+        # cisty zdroj pre thumbnail: frame z RAW b-rollu (bez napalenych titulkov)
+        if (not is_image) and broll and str(broll).lower().endswith(".mp4") and i >= 2:
+            _ts = os.path.join(out_dir, "_thumbsrc.jpg")
+            if not os.path.exists(_ts):
+                try:
+                    run([cfg["ffmpeg"], "-y", "-ss", "1", "-i", broll,
+                         "-frames:v", "1", "-q:v", "2", _ts])
+                except Exception:
+                    pass
         if i == 0:
             first_broll, first_is_image = broll, is_image
         if vid is not None:
