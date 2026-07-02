@@ -101,17 +101,47 @@ def _ensure_kokoro_model(md):
                 f.write(r.read())
 
 
+def _kokoro_chunks(s, limit=280):
+    """Rozdel text na vety, pridlhe vety na slova; kazdy kusok <= limit znakov
+    (bezpecne pod 510 fonem, aby kokoro-onnx nespadol na IndexError)."""
+    import re as _re
+    out = []
+    for p in _re.split(r"(?<=[.!?])\s+", (s or "").strip()):
+        p = p.strip()
+        if not p:
+            continue
+        if len(p) <= limit:
+            out.append(p); continue
+        cur = ""
+        for w in p.split():
+            if cur and len(cur) + len(w) + 1 > limit:
+                out.append(cur); cur = w
+            else:
+                cur = (cur + " " + w).strip()
+        if cur:
+            out.append(cur)
+    return out or [(s or ".").strip() or "."]
+
+
 def kokoro_tts(text, out_mp3, cfg):
-    """Ludsky hlas cez Kokoro (kokoro-onnx). Casovanie slov odhadom (proporcne dlzkou slov)."""
+    """Ludsky hlas cez Kokoro (kokoro-onnx). Casovanie slov odhadom (proporcne dlzkou slov).
+    Dlhy text sa deli na kusky (< ~280 znakov) a audio sa spaja -> kokoro nikdy nepretecie 510 fonem."""
     global _KOKORO
     import soundfile as sf
+    import numpy as _np
     if _KOKORO is None:
         from kokoro_onnx import Kokoro
         md = _kokoro_model_dir(cfg)
         _ensure_kokoro_model(md)
         _KOKORO = Kokoro(os.path.join(md, "kokoro-v1.0.onnx"), os.path.join(md, "voices-v1.0.bin"))
     voice = cfg.get("kokoro_voice", "am_puck")
-    samples, sr = _KOKORO.create(text, voice=voice, speed=float(cfg.get("kokoro_speed", 1.0)), lang="en-us")
+    speed = float(cfg.get("kokoro_speed", 1.0))
+    parts, sr = [], 24000
+    for ch in _kokoro_chunks(text):
+        s, sr = _KOKORO.create(ch, voice=voice, speed=speed, lang="en-us")
+        if s is not None and len(s):
+            parts.append(s)
+    samples = _np.concatenate(parts) if len(parts) > 1 else (parts[0] if parts else _np.zeros(1, dtype="float32"))
     wav = out_mp3 + ".tmp.wav"
     sf.write(wav, samples, sr)
     run([cfg["ffmpeg"], "-y", "-i", wav, "-b:a", "160k", out_mp3])
