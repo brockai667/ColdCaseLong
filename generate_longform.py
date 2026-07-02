@@ -173,6 +173,31 @@ def extract_json(s):
     return json.loads(s)
 
 
+def sanitize_text(txt):
+    """Ochrana proti degenerovanemu LLM textu (napr. 'mastermind mastermind mastermind...'):
+    zbali opakovane slova/bigramy, orez na max 2 vety; ak je text stale degenerovany, zahod
+    cely segment (inak na nom spadne TTS a s nim CELY 8-10 min render)."""
+    txt = re.sub(r"\s+", " ", str(txt)).strip()
+    def key(w):
+        return re.sub(r"[^a-z0-9']", "", w.lower())
+    out = []
+    for w in txt.split():
+        if out and key(w) and key(w) == key(out[-1]):
+            continue                                     # "x x x" -> "x"
+        if len(out) >= 3 and key(w) == key(out[-2]) and key(out[-1]) == key(out[-3]):
+            continue                                     # "a b a b a b" -> "a b a"
+        out.append(w)
+    txt = " ".join(out)
+    sents = re.split(r"(?<=[.!?])\s+", txt)
+    txt = " ".join(sents[:2]).strip()                    # segment = 1-2 kratke vety
+    if len(txt) > 400:
+        txt = txt[:400].rsplit(" ", 1)[0].rstrip(",;:") + "."
+    ws = [key(w) for w in txt.split() if key(w)]
+    if len(ws) >= 8 and len(set(ws)) * 2 < len(ws):      # <50% unikatnych slov = degenerovane
+        return ""
+    return txt
+
+
 def slug(t):
     return re.sub(r"[^a-z0-9]+", "_", t.lower()).strip("_")[:50] or "doc"
 
@@ -233,7 +258,7 @@ def main():
         for s in raw:
             if not (isinstance(s, dict) and s.get("text") and s.get("keywords")):
                 continue
-            txt = str(s["text"]).strip()
+            txt = sanitize_text(s["text"])
             if not txt or txt.lower() in have:
                 continue
             seg = {"text": txt, "keywords": str(s["keywords"]).strip()}
