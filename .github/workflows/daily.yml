@@ -2,7 +2,7 @@ name: ColdCaseLong Documentary
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC (~04:00 Bratislava) - skoro rano, hotove pred rannym slotom
+    - cron: "0 2 * * 0"   # 02:00 UTC nedela (~04:00) - WEEKLY kvoli Actions minutam; predtym denne pred rannym slotom
   workflow_dispatch: {}    # manualne spustenie z GitHub UI
 
 permissions:
