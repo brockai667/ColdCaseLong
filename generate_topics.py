@@ -72,18 +72,42 @@ def build_prompt(n, existing_titles):
     )
 
 
+_TOPIC_MODELS = [MODEL] + [m.strip() for m in os.environ.get(
+    "MODELS_FALLBACK", "openai/gpt-oss-20b,groq/compound-mini").split(",")
+    if m.strip() and m.strip() != MODEL]
+
+
 def call_model(user_text):
-    r = requests.post(
-        BASE.rstrip("/") + "/chat/completions",
-        headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
-        json={"model": MODEL, "temperature": 0.85,
-              "messages": [{"role": "system", "content": SYSTEM},
-                           {"role": "user", "content": user_text}]},
-        timeout=180,
-    )
-    if r.status_code >= 400:
-        raise RuntimeError(f"Models API {r.status_code}: {r.text[:500]}")
-    return r.json()["choices"][0]["message"]["content"]
+    import time as _t
+    last = "?"
+    for _model in _TOPIC_MODELS:
+        _payload = {"model": _model, "temperature": 0.85, "max_tokens": 3000,
+                    "messages": [{"role": "system", "content": SYSTEM},
+                                 {"role": "user", "content": user_text}]}
+        if _model.startswith("openai/gpt-oss"):
+            _payload["reasoning_effort"] = "low"
+        for _i in range(3):
+            r = requests.post(
+                BASE.rstrip("/") + "/chat/completions",
+                headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
+                json=_payload, timeout=180,
+            )
+            if r.status_code < 400:
+                _m = r.json()["choices"][0]["message"]
+                _txt = (_m.get("content") or "").strip() or (_m.get("reasoning") or "").strip()
+                if _txt:
+                    return _txt
+                last = f"{_model}: prazdna odpoved"
+                break
+            last = f"Models API {r.status_code} ({_model}): {r.text[:300]}"
+            if r.status_code == 404:
+                break
+            if r.status_code == 429:
+                _t.sleep(65); continue
+            if r.status_code == 413:
+                break
+            _t.sleep(8 * (_i + 1))
+    raise RuntimeError(last)
 
 
 def extract_json(s):

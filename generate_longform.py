@@ -136,12 +136,14 @@ def call_model(user_text):
     for model in _MODELS:                                 # hlavny model, potom zalozne
         for attempt in range(6):                          # opakuj pri 429 / 5xx (rate limit / pretazenie)
             try:
+                _payload = {"model": model, "temperature": 0.8, "max_tokens": 3000,
+                            "messages": [{"role": "system", "content": SYSTEM},
+                                         {"role": "user", "content": user_text}]}
+                if model.startswith("openai/gpt-oss"):
+                    _payload["reasoning_effort"] = "low"   # inak reasoning zozerie max_tokens -> prazdny content
                 r = requests.post(BASE.rstrip("/") + "/chat/completions",
                     headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
-                    json={"model": model, "temperature": 0.8, "max_tokens": 4000,
-                          "response_format": {"type": "json_object"},
-                          "messages": [{"role": "system", "content": SYSTEM},
-                                       {"role": "user", "content": user_text}]},
+                    json=_payload,
                     timeout=300)
             except Exception as e:
                 last = "exc %s" % str(e)[:120]; _time.sleep(6); continue
@@ -157,7 +159,12 @@ def call_model(user_text):
             if r.status_code >= 400:                              # ina chyba -> skus dalsi model
                 last = "%s %s" % (r.status_code, r.text[:200]); break
             _last[0] = _time.time()
-            return r.json()["choices"][0]["message"]["content"]
+            _m = r.json()["choices"][0]["message"]
+            _txt = (_m.get("content") or "").strip() or (_m.get("reasoning") or "").strip()
+            if _txt:
+                return _txt
+            last = "%s prazdna odpoved" % model
+            break
     _last[0] = _time.time()
     raise RuntimeError("Models API zlyhalo (vsetky modely): %s" % last)
 
